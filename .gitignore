@@ -37,11 +37,8 @@ bin/
 *.test
 *.out
 vendor/
-*.mod
-*.sum
-go.sum
-go.work.sum
 *.log
+
 
 # React (Node.js)
 node_modules/
