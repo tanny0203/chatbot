@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/marcboeker/go-duckdb"
@@ -171,8 +172,20 @@ func inferColumnTypeAdvanced(data [][]string, columnIndex int, columnName string
 		regexp.MustCompile(`^\d{1,2}-\w{3}-\d{4}$`),                 // DD-MMM-YYYY
 	}
 
-	// Full data scan for accurate statistics
-	for i := 0; i < totalRows; i++ {
+
+	const maxSampleSize = 1000 
+
+
+	stepSize := 1
+	if totalRows > maxSampleSize {
+		stepSize = totalRows / maxSampleSize
+	}
+
+	for i := 0; i < totalRows; i += stepSize {
+		if len(values) >= maxSampleSize {
+			break
+		}
+
 		if columnIndex >= len(data[i]) {
 			nullCount++
 			continue
@@ -190,6 +203,15 @@ func inferColumnTypeAdvanced(data [][]string, columnIndex int, columnName string
 		// Keep first 5 for samples
 		if len(metadata.SampleValues) < 5 {
 			metadata.SampleValues = append(metadata.SampleValues, val)
+		}
+	}
+
+	// Count nulls in remaining data (fast scan)
+	if totalRows > maxSampleSize {
+		for i := 0; i < totalRows; i++ {
+			if columnIndex >= len(data[i]) || strings.TrimSpace(data[i][columnIndex]) == "" {
+				nullCount++
+			}
 		}
 	}
 
@@ -452,38 +474,67 @@ func createTable(tableName string, headers []string, data [][]string, db *sql.DB
 		return err
 	}
 
-	// Insert data
+	// Insert data with batch optimization
 	if len(data) > 0 {
+		const batchSize = 1000 // Process 1000 rows per batch
+
 		placeholders := make([]string, len(headers))
 		for i := range placeholders {
 			placeholders[i] = "?"
 		}
-
 		insertSQL := fmt.Sprintf(`INSERT INTO "%s" VALUES (%s)`, tableName, strings.Join(placeholders, ", "))
-		stmt, err := db.Prepare(insertSQL)
-		if err != nil {
-			return err
-		}
-		defer stmt.Close()
 
-		for _, row := range data {
-			values := make([]interface{}, len(headers))
-			for i, val := range row {
-				if i < len(values) {
-					if val == "" {
-						values[i] = nil
-					} else {
-						values[i] = val
+		// Process data in batches
+		for batchStart := 0; batchStart < len(data); batchStart += batchSize {
+			batchEnd := batchStart + batchSize
+			if batchEnd > len(data) {
+				batchEnd = len(data)
+			}
+
+			// Begin transaction for this batch
+			tx, err := db.Begin()
+			if err != nil {
+				return err
+			}
+
+			stmt, err := tx.Prepare(insertSQL)
+			if err != nil {
+				tx.Rollback()
+				return err
+			}
+
+			// Insert batch of rows
+			for i := batchStart; i < batchEnd; i++ {
+				row := data[i]
+				values := make([]interface{}, len(headers))
+
+				for j, val := range row {
+					if j < len(values) {
+						if val == "" {
+							values[j] = nil
+						} else {
+							values[j] = val
+						}
 					}
 				}
-			}
-			// Pad with nil if row is shorter than headers
-			for i := len(row); i < len(values); i++ {
-				values[i] = nil
+
+				// Pad with nil if row is shorter than headers
+				for j := len(row); j < len(values); j++ {
+					values[j] = nil
+				}
+
+				_, err = stmt.Exec(values...)
+				if err != nil {
+					stmt.Close()
+					tx.Rollback()
+					return err
+				}
 			}
 
-			_, err = stmt.Exec(values...)
-			if err != nil {
+			stmt.Close()
+
+			// Commit the batch
+			if err = tx.Commit(); err != nil {
 				return err
 			}
 		}
@@ -496,9 +547,16 @@ func createTable(tableName string, headers []string, data [][]string, db *sql.DB
 func generateTableMetadata(tableName string, headers []string, data [][]string) map[string]interface{} {
 	columns := make([]ColumnMetadata, len(headers))
 
+	// Concurrent type inference for better performance
+	var wg sync.WaitGroup
 	for i, header := range headers {
-		columns[i] = inferColumnTypeAdvanced(data, i, header)
+		wg.Add(1)
+		go func(idx int, colName string) {
+			defer wg.Done()
+			columns[idx] = inferColumnTypeAdvanced(data, idx, colName)
+		}(i, header)
 	}
+	wg.Wait()
 
 	// Generate table-level example queries
 	tableExamples := generateTableExamples(tableName, columns, data)
