@@ -2,7 +2,7 @@ package chat
 
 import (
 	"go-backend/internal/models"
-
+	
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -30,7 +30,9 @@ func (r *Repository) ListAllByUserID(userID uuid.UUID) ([]models.Chat, error) {
 
 func (r *Repository) GetByID(id uuid.UUID) (*models.Chat, error) {
 	var chat models.Chat
-	if err := r.DB.Preload("Messages").Preload("Files").First(&chat, "id = ?", id).Error; err != nil {
+	if err := r.DB.Preload("Messages").
+					Preload("Files").
+					First(&chat, "id = ?", id).Error; err != nil {
 		return nil, err
 	}
 	return &chat, nil
