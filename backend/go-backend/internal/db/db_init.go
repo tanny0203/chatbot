@@ -1,24 +1,21 @@
 package db
 
 import (
-	"database/sql"
 	"log"
+	"os"
 
-	_ "github.com/marcboeker/go-duckdb"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
-var Db *sql.DB
+var DB *gorm.DB
 
-func InitDB() {
+func ConnectToDB() {
 	var err error
-	Db, err = sql.Open("duckdb", "")
-	if err != nil {
-		log.Fatal("Failed to connect to DuckDB:", err)
-	}
+	dsn := os.Getenv("DB_URL")
+	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
 
-	if err = Db.Ping(); err != nil {
-		log.Fatal("Failed to ping DuckDB:", err)
+	if (err != nil) {
+		log.Fatal("failed to connect to database")
 	}
-
-	log.Println("Connected to DuckDB successfully")
 }
