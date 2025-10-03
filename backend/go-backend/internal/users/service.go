@@ -1,12 +1,20 @@
 package users
 
 import (
+	"errors"
 	"fmt"
 	"go-backend/internal/models"
 	"go-backend/internal/utils"
 
 	"github.com/google/uuid"
 )
+
+var (
+	ErrUserExists     = errors.New("user already exists")
+	ErrUserNotFound   = errors.New("user not found")
+	ErrInvalidCredentials = errors.New("invalid credentials")
+)
+
 
 type Service struct {
 	repo *Repository
@@ -20,17 +28,18 @@ func (s *Service) GetUserByID(userID uuid.UUID) (models.User, error) {
 	return s.repo.GetByID(userID)
 }
 
-func (s *Service) CreateUser(dto *UserRegisterDTO) error {
+func (s *Service) CreateUser(dto *UserRegisterDTO) (*models.User, error) {
 
 	password, err := utils.HashPassword(dto.Password)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	user := &models.User{
+		ID: 	   uuid.New(),
 		Email:        dto.Email,
 		PasswordHash: password,
-		Name:         &dto.Name,
+		Name:         dto.Name,
 	}
 
 	return s.repo.Create(user)

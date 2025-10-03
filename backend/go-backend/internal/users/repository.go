@@ -16,8 +16,17 @@ func NewRepo(db *gorm.DB) *Repository {
 	return &Repository{DB: db}
 }
 
-func (r *Repository) Create(user *models.User) error {
-	return r.DB.Create(user).Error
+func (r *Repository) Create(user *models.User) (*models.User, error) {
+
+	existingUser, err := r.GetByEmail(user.Email)
+	if err == nil && existingUser != nil {
+		return nil, gorm.ErrDuplicatedKey
+	}
+
+	if err != nil && err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+	return user, r.DB.Create(user).Error
 }
 
 func (r *Repository) GetByEmail(email string) (*models.User, error) {
