@@ -1,6 +1,5 @@
 package utils
 
-
 import (
 	"os"
 	"time"
@@ -14,7 +13,7 @@ func GenerateAccessToken(userID uuid.UUID) (string, error){
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 	"sub": userID,
-	"exp": time.Now().Add(15 * time.Minute).Unix(),
+	"exp": time.Now().Add(7 * 24 * time.Hour).Unix(),
 	})
 
 	return token.SignedString([]byte(os.Getenv("SECRET_KEY")))

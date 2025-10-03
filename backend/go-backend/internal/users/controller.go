@@ -35,7 +35,6 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB) {
 				return
 			}
 
-
 			token, err := utils.GenerateAccessToken(user.ID)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -43,7 +42,8 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB) {
 			}
 			domain := os.Getenv("COOKIE_DOMAIN")
 			c.SetSameSite(http.SameSiteLaxMode)
-			c.SetCookie("Authorization", token, 7*24*60*60, "/", domain, true, true)
+			// Set secure to false for local development (http) - set to true in production (https)
+			c.SetCookie("Authorization", token, 7*24*60*60, "/", domain, false, true)
 
 			c.JSON(http.StatusCreated, gin.H{
 				"status": "user created",
@@ -52,11 +52,9 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB) {
 					"name":  user.Name,
 					"email": user.Email,
 				},
-				"token": token, 
+				"token": token,
 			})
 		})
-
-
 
 		users.POST("/login", func(c *gin.Context) {
 			var dto UserLoginDTO
@@ -77,19 +75,16 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB) {
 				return
 			}
 
-	
-			domain := os.Getenv("COOKIE_DOMAIN") 
-			c.SetSameSite(http.SameSiteLaxMode)  
-			c.SetCookie("Authorization", token, 7*24*60*60, "/", domain, true, true) 
+			domain := os.Getenv("COOKIE_DOMAIN")
+			c.SetSameSite(http.SameSiteLaxMode)
+			// Set secure to false for local development (http) - set to true in production (https)
+			c.SetCookie("Authorization", token, 7*24*60*60, "/", domain, false, true)
 
-
-	
 			c.JSON(http.StatusOK, gin.H{
 				"status": "login successful",
 				"token":  token,
 			})
 		})
-
 
 		users.GET("/me", middleware.RequireAuth(), func(c *gin.Context) {
 			user, exists := c.Get("user")
@@ -107,16 +102,14 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB) {
 			})
 		})
 
-
-
 		users.POST("/logout", func(c *gin.Context) {
 			domain := os.Getenv("COOKIE_DOMAIN")
 			c.SetSameSite(http.SameSiteLaxMode) // or NoneMode for cross-site
-			c.SetCookie("Authorization", "", -1, "/", domain, true, true)
-			
+			// Set secure to false for local development (http) - set to true in production (https)
+			c.SetCookie("Authorization", "", -1, "/", domain, false, true)
+
 			c.JSON(http.StatusOK, gin.H{"status": "logged out"})
 		})
 
-
 	}
-}	
+}
