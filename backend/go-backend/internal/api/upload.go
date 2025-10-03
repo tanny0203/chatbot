@@ -1,147 +1,19 @@
 package api
 
 import (
-	"database/sql"
-	"encoding/csv"
 	"fmt"
-	"io"
-	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	_ "github.com/marcboeker/go-duckdb"
-	"github.com/tealeg/xlsx/v3"
 )
 
-func HandleFileUpload(filename string, file io.Reader, db *sql.DB) (map[string]interface{}, error) {
-	var data [][]string
-	var headers []string
-	var err error
 
-	if strings.HasSuffix(strings.ToLower(filename), ".csv") {
-		data, headers, err = readCSV(file)
-	} else if strings.HasSuffix(strings.ToLower(filename), ".xlsx") {
-		data, headers, err = readXLSX(file)
-	} else {
-		return nil, fmt.Errorf("unsupported file type")
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	tableName := strings.TrimSuffix(filename, filepath.Ext(filename))
-
-	// Create table in database
-	if err := createTable(tableName, headers, data, db); err != nil {
-		return nil, err
-	}
-
-	// Generate detailed metadata for NL2SQL
-	metadata := generateTableMetadata(tableName, headers, data)
-
-	return metadata, nil
-}
-
-func readCSV(file io.Reader) ([][]string, []string, error) {
-	reader := csv.NewReader(file)
-	records, err := reader.ReadAll()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if len(records) == 0 {
-		return nil, nil, fmt.Errorf("empty CSV file")
-	}
-
-	headers := records[0]
-	data := records[1:]
-
-	return data, headers, nil
-}
-
-func readXLSX(file io.Reader) ([][]string, []string, error) {
-	// Read the entire file into memory
-	content, err := io.ReadAll(file)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	wb, err := xlsx.OpenBinary(content)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if len(wb.Sheets) == 0 {
-		return nil, nil, fmt.Errorf("no sheets found in Excel file")
-	}
-
-	sheet := wb.Sheets[0]
-	var data [][]string
-	var headers []string
-
-	rowIndex := 0
-	err = sheet.ForEachRow(func(row *xlsx.Row) error {
-		var rowData []string
-		row.ForEachCell(func(cell *xlsx.Cell) error {
-			text := cell.String()
-			rowData = append(rowData, text)
-			return nil
-		})
-
-		if rowIndex == 0 {
-			headers = rowData
-		} else {
-			data = append(data, rowData)
-		}
-		rowIndex++
-		return nil
-	})
-
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return data, headers, nil
-}
-
-// ValueCount represents frequency of values for categorical analysis
-type ValueCount struct {
-	Value string `json:"value"`
-	Count int    `json:"count"`
-}
-
-// ColumnMetadata holds comprehensive information about a column for NL2SQL
-type ColumnMetadata struct {
-	Name            string            `json:"name"`
-	DataType        string            `json:"data_type"` // "INTEGER","FLOAT","TEXT","BOOLEAN","DATE"
-	SqlType         string            `json:"sql_type"`  // "INTEGER","DOUBLE","VARCHAR","BOOLEAN","DATE"
-	Nullable        bool              `json:"nullable"`
-	IsCategory      bool              `json:"is_category"`
-	IsBoolean       bool              `json:"is_boolean"`
-	IsDate          bool              `json:"is_date"`
-	UniqueCount     int               `json:"unique_count"`
-	NullCount       int               `json:"null_count"`
-	SampleValues    []string          `json:"sample_values"`    // up to 5 examples
-	TopValues       []ValueCount      `json:"top_values"`       // top 10 frequent values
-	EnumValues      []string          `json:"enum_values"`      // all categorical values
-	Min             *float64          `json:"min,omitempty"`    // for numeric columns
-	Max             *float64          `json:"max,omitempty"`    // for numeric columns
-	Mean            *float64          `json:"mean,omitempty"`   // for numeric columns
-	Median          *float64          `json:"median,omitempty"` // for numeric columns
-	Std             *float64          `json:"std,omitempty"`    // for numeric columns
-	Description     string            `json:"description"`
-	ValueMappings   map[string]string `json:"value_mappings,omitempty"`   // code -> human readable
-	SynonymMappings map[string]string `json:"synonym_mappings,omitempty"` // query synonyms
-	ExampleQueries  []string          `json:"example_queries,omitempty"`  // dataset-specific examples
-}
 
 // Enhanced type inference for NL2SQL with production-ready features
-func inferColumnTypeAdvanced(data [][]string, columnIndex int, columnName string) ColumnMetadata {
-	metadata := ColumnMetadata{
+func inferColumnTypeAdvanced(data [][]string, columnIndex int, columnName string) models.ColumnMetadata {
+	metadata := models.ColumnMetadata{
 		Name:            columnName,
 		DataType:        "TEXT",
 		SqlType:         "VARCHAR",
@@ -327,9 +199,9 @@ func inferColumnTypeAdvanced(data [][]string, columnIndex int, columnName string
 	if len(sortedValues) < maxTop {
 		maxTop = len(sortedValues)
 	}
-	metadata.TopValues = make([]ValueCount, maxTop)
+	metadata.TopValues = make([]models.ValueCount, maxTop)
 	for i := 0; i < maxTop; i++ {
-		metadata.TopValues[i] = ValueCount{
+		metadata.TopValues[i] = models.ValueCount{
 			Value: sortedValues[i].Key,
 			Count: sortedValues[i].Value,
 		}
@@ -412,9 +284,6 @@ func inferColumnTypeAdvanced(data [][]string, columnIndex int, columnName string
 		metadata.Description = "Text data"
 	}
 
-	// Generate example queries for this column
-	metadata.ExampleQueries = generateColumnExamples(columnName, metadata)
-
 	return metadata
 }
 
@@ -447,101 +316,8 @@ func generateColumnExamples(columnName string, metadata ColumnMetadata) []string
 }
 
 // Simple inference for table creation (backward compatibility)
-func inferColumnType(data [][]string, columnIndex int) string {
-	metadata := inferColumnTypeAdvanced(data, columnIndex, "")
-	return metadata.SqlType
-}
 
-func createTable(tableName string, headers []string, data [][]string, db *sql.DB) error {
-	// Drop table if exists
-	dropSQL := fmt.Sprintf(`DROP TABLE IF EXISTS "%s"`, tableName)
-	_, err := db.Exec(dropSQL)
-	if err != nil {
-		return err
-	}
 
-	// Infer column types
-	columnDefs := make([]string, len(headers))
-	for i, header := range headers {
-		colType := inferColumnType(data, i)
-		columnDefs[i] = fmt.Sprintf(`"%s" %s`, header, colType)
-	}
-
-	// Create table
-	createSQL := fmt.Sprintf(`CREATE TABLE "%s" (%s)`, tableName, strings.Join(columnDefs, ", "))
-	_, err = db.Exec(createSQL)
-	if err != nil {
-		return err
-	}
-
-	// Insert data with batch optimization
-	if len(data) > 0 {
-		const batchSize = 1000 // Process 1000 rows per batch
-
-		placeholders := make([]string, len(headers))
-		for i := range placeholders {
-			placeholders[i] = "?"
-		}
-		insertSQL := fmt.Sprintf(`INSERT INTO "%s" VALUES (%s)`, tableName, strings.Join(placeholders, ", "))
-
-		// Process data in batches
-		for batchStart := 0; batchStart < len(data); batchStart += batchSize {
-			batchEnd := batchStart + batchSize
-			if batchEnd > len(data) {
-				batchEnd = len(data)
-			}
-
-			// Begin transaction for this batch
-			tx, err := db.Begin()
-			if err != nil {
-				return err
-			}
-
-			stmt, err := tx.Prepare(insertSQL)
-			if err != nil {
-				tx.Rollback()
-				return err
-			}
-
-			// Insert batch of rows
-			for i := batchStart; i < batchEnd; i++ {
-				row := data[i]
-				values := make([]interface{}, len(headers))
-
-				for j, val := range row {
-					if j < len(values) {
-						if val == "" {
-							values[j] = nil
-						} else {
-							values[j] = val
-						}
-					}
-				}
-
-				// Pad with nil if row is shorter than headers
-				for j := len(row); j < len(values); j++ {
-					values[j] = nil
-				}
-
-				_, err = stmt.Exec(values...)
-				if err != nil {
-					stmt.Close()
-					tx.Rollback()
-					return err
-				}
-			}
-
-			stmt.Close()
-
-			// Commit the batch
-			if err = tx.Commit(); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
 
 // Generate comprehensive metadata for NL2SQL model
 func generateTableMetadata(tableName string, headers []string, data [][]string) map[string]interface{} {

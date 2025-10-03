@@ -40,7 +40,7 @@ func main() {
 	// })
 
 	users.RegisterRoutes(r, db.DB)
-	chat.RegisterRoutes(r, db.DB)
+	chat.RegisterRoutes(r, db.DB, db.FileStorageDB)
 
 	r.Run(":8080")
 }
