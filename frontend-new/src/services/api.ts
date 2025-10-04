@@ -9,33 +9,64 @@ import type {
   Message,
   SendMessageDTO,
   FileResponse,
+  NL2SQLRequest,
+  NL2SQLResponse,
+  UploadResponse,
 } from '../types/api';
 
-const API_BASE_URL = 'http://localhost:8080';
+// Backend URLs
+const GO_API_BASE_URL = 'http://localhost:8080';  // Go backend for auth, chats
+const PYTHON_API_BASE_URL = 'http://localhost:8000';  // Python FastAPI for NL2SQL
 
-// Create axios instance with default config
-const api = axios.create({
-  baseURL: API_BASE_URL,
+// Create axios instance for Go backend (auth, chat management)
+const goApi = axios.create({
+  baseURL: GO_API_BASE_URL,
   withCredentials: true, // Important for cookies
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-// Auth API
+// Create axios instance for Python backend (NL2SQL, file uploads)
+const pythonApi = axios.create({
+  baseURL: PYTHON_API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Add request interceptor to include user context for Python API
+pythonApi.interceptors.request.use((config) => {
+  // Get user ID from localStorage or auth context if needed
+  const userStr = localStorage.getItem('user');
+  if (userStr) {
+    try {
+      const user = JSON.parse(userStr);
+      // Add user_id to requests that need it
+      if (config.data && typeof config.data === 'object') {
+        config.data.user_id = user.id;
+      }
+    } catch (error) {
+      console.error('Error parsing user from localStorage:', error);
+    }
+  }
+  return config;
+});
+
+// Auth API (Go backend)
 export const authApi = {
   register: async (userData: UserRegisterDTO): Promise<AuthResponse> => {
-    const response: AxiosResponse<AuthResponse> = await api.post('/auth/register', userData);
+    const response: AxiosResponse<AuthResponse> = await goApi.post('/auth/register', userData);
     return response.data;
   },
 
   login: async (credentials: UserLoginDTO): Promise<AuthResponse> => {
-    const response: AxiosResponse<AuthResponse> = await api.post('/auth/login', credentials);
+    const response: AxiosResponse<AuthResponse> = await goApi.post('/auth/login', credentials);
     return response.data;
   },
 
   getMe: async (): Promise<User> => {
-    const response: AxiosResponse<User> = await api.get('/auth/me');
+    const response: AxiosResponse<User> = await goApi.get('/auth/me');
     return response.data;
   },
 
@@ -45,38 +76,91 @@ export const authApi = {
   },
 };
 
-// Chat API
+// Chat API (Go backend for chat management)
 export const chatApi = {
   getChats: async (): Promise<Chat[]> => {
-    const response: AxiosResponse<Chat[]> = await api.get('/chats');
+    const response: AxiosResponse<Chat[]> = await goApi.get('/chats');
     return response.data;
   },
 
   createChat: async (chatData: CreateChatDTO): Promise<Chat> => {
-    const response: AxiosResponse<Chat> = await api.post('/chats', chatData);
+    const response: AxiosResponse<Chat> = await goApi.post('/chats', chatData);
     return response.data;
   },
 
   getMessages: async (chatId: string): Promise<Message[]> => {
-    const response: AxiosResponse<Message[]> = await api.get(`/chats/${chatId}/messages`);
+    const response: AxiosResponse<Message[]> = await goApi.get(`/chats/${chatId}/messages`);
     return response.data;
   },
 
+  // This will be handled by NL2SQL API instead
   sendMessage: async (chatId: string, messageData: SendMessageDTO): Promise<Message> => {
-    const response: AxiosResponse<Message> = await api.post(`/chats/${chatId}/messages`, messageData);
+    const response: AxiosResponse<Message> = await goApi.post(`/chats/${chatId}/messages`, messageData);
     return response.data;
   },
 
   getFiles: async (chatId: string): Promise<FileResponse[]> => {
-    const response: AxiosResponse<FileResponse[]> = await api.get(`/chats/${chatId}/files`);
+    const response: AxiosResponse<FileResponse[]> = await goApi.get(`/chats/${chatId}/files`);
+    return response.data;
+  },
+};
+
+// NL2SQL API (Python FastAPI backend)
+export const nl2sqlApi = {
+  // Upload file to Python backend
+  uploadFile: async (chatId: string, userId: string, file: File): Promise<UploadResponse> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('user_id', userId);
+    formData.append('chat_id', chatId);
+    
+    const response: AxiosResponse<UploadResponse> = await pythonApi.post(
+      '/api/upload',
+      formData,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      }
+    );
     return response.data;
   },
 
+  // Ask NL2SQL question
+  askQuestion: async (request: NL2SQLRequest): Promise<NL2SQLResponse> => {
+    const response: AxiosResponse<NL2SQLResponse> = await pythonApi.post('/api/ask', request);
+    return response.data;
+  },
+
+  // Get chat history from Python backend
+  getChatHistory: async (chatId: string, userId: string, limit?: number): Promise<any> => {
+    const params = new URLSearchParams({ user_id: userId });
+    if (limit) params.append('limit', limit.toString());
+    
+    const response = await pythonApi.get(`/chats/${chatId}/history?${params}`);
+    return response.data;
+  },
+
+  // Create chat in Python backend
+  createPythonChat: async (userId: string): Promise<any> => {
+    const response = await pythonApi.post('/chats/', { user_id: userId });
+    return response.data;
+  },
+
+  // Health check
+  healthCheck: async (): Promise<any> => {
+    const response = await pythonApi.get('/health');
+    return response.data;
+  },
+};
+
+// Legacy file upload (for backward compatibility with Go backend)
+export const fileApi = {
   uploadFile: async (chatId: string, file: File): Promise<FileResponse> => {
     const formData = new FormData();
     formData.append('file', file);
     
-    const response: AxiosResponse<FileResponse> = await api.post(
+    const response: AxiosResponse<FileResponse> = await goApi.post(
       `/chats/${chatId}/files`,
       formData,
       {
@@ -89,4 +173,4 @@ export const chatApi = {
   },
 };
 
-export default api;
+export default { goApi, pythonApi };

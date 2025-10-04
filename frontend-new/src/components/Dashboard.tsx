@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { chatApi } from '../services/api';
+import { getDualBackendService } from '../services/dualBackendService';
 import ChatSidebar from './ChatSidebar';
 import ChatWindow from './ChatWindow';
 import NewChatModal from './NewChatModal';
@@ -53,7 +54,8 @@ const Dashboard: React.FC = () => {
   const loadMessages = async (chatId: string) => {
     setLoading(true);
     try {
-      const messageData = await chatApi.getMessages(chatId);
+      const dualService = getDualBackendService(user);
+      const messageData = await dualService.getChatHistory(chatId);
       setMessages(messageData);
     } catch (error) {
       console.error('Failed to load messages:', error);
@@ -64,7 +66,8 @@ const Dashboard: React.FC = () => {
 
   const createNewChat = async (title: string) => {
     try {
-      const newChat = await chatApi.createChat({ title });
+      const dualService = getDualBackendService(user);
+      const newChat = await dualService.createChat(title);
       setChats([newChat, ...chats]);
       navigate(`/c/${newChat.id}`);
     } catch (error) {
@@ -82,11 +85,12 @@ const Dashboard: React.FC = () => {
 
   const sendMessage = async (content: string) => {
     let chatToUse = selectedChat;
+    const dualService = getDualBackendService(user);
     
     if (!chatToUse) {
       // Create a new chat first if none is selected
       try {
-        const newChat = await chatApi.createChat({ title: 'New Chat' });
+        const newChat = await dualService.createChat('New Chat');
         setChats([newChat, ...chats]);
         setMessages([]); // Clear previous messages
         navigate(`/c/${newChat.id}`);
@@ -109,8 +113,8 @@ const Dashboard: React.FC = () => {
     setMessages(prevMessages => [...prevMessages, userMessage]);
 
     try {
-      // Send message to API and get response
-      const assistantMessage = await chatApi.sendMessage(chatToUse.id, { content });
+      // Send message using dual backend service (tries NL2SQL first, falls back to regular chat)
+      const assistantMessage = await dualService.sendMessage(chatToUse.id, content);
       
       // Add assistant response to messages
       setMessages(prevMessages => [...prevMessages, assistantMessage]);
@@ -119,8 +123,33 @@ const Dashboard: React.FC = () => {
       loadChats();
     } catch (error) {
       console.error('Failed to send message:', error);
-      // Remove the user message if sending failed
-      setMessages(prevMessages => prevMessages.filter(msg => msg.id !== userMessage.id));
+      // Remove the user message if sending failed and add error message
+      setMessages(prevMessages => {
+        const filtered = prevMessages.filter(msg => msg.id !== userMessage.id);
+        const errorMessage: Message = {
+          id: `error-${Date.now()}`,
+          role: 'assistant',
+          content: '❌ Sorry, I encountered an error processing your message. Please try again.',
+          created_at: new Date().toISOString()
+        };
+        return [...filtered, errorMessage];
+      });
+    }
+  };
+
+  const handleFileUpload = async (file: File) => {
+    if (!selectedChat || !user) {
+      throw new Error('No chat selected or user not authenticated');
+    }
+
+    const dualService = getDualBackendService(user);
+    const result = await dualService.uploadFile(selectedChat.id, file);
+    
+    if (result.success) {
+      // Reload messages to show the upload confirmation
+      await loadMessages(selectedChat.id);
+    } else {
+      throw new Error(result.message);
     }
   };
 
@@ -142,6 +171,7 @@ const Dashboard: React.FC = () => {
           chat={selectedChat}
           messages={messages}
           onSendMessage={sendMessage}
+          onFileUpload={handleFileUpload}
           loading={loading}
           onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         />

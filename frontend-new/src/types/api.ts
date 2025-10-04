@@ -52,6 +52,33 @@ export interface FileResponse {
   table_name: string;
 }
 
+// NL2SQL Types (for Python FastAPI backend)
+export interface NL2SQLRequest {
+  question: string;
+  user_id: string;
+  chat_id: string;
+}
+
+export interface NL2SQLResponse {
+  success: boolean;
+  answer: string;
+  sql_query?: string;
+  result_count?: number;
+  execution_success?: boolean;
+  error?: string;
+  requires_dataset?: boolean;
+}
+
+export interface UploadResponse {
+  success: boolean;
+  message: string;
+  file_id: string;
+  table_name: string;
+  rows: number;
+  columns: number;
+  filename: string;
+}
+
 // API Response Types
 export interface ApiResponse<T = any> {
   data?: T;

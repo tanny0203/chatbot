@@ -6,6 +6,7 @@ interface ChatWindowProps {
   chat: Chat | null;
   messages: Message[];
   onSendMessage: (content: string) => void;
+  onFileUpload?: (file: File) => Promise<void>;
   loading: boolean;
   onToggleSidebar: () => void;
 }
@@ -14,12 +15,15 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   chat,
   messages,
   onSendMessage,
+  onFileUpload,
   loading,
   onToggleSidebar,
 }) => {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -42,6 +46,49 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
     }
   };
 
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !onFileUpload || !chat) return;
+
+    // Validate file type
+    const validTypes = ['.csv', '.xlsx', '.xls'];
+    const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+    
+    if (!validTypes.includes(fileExtension)) {
+      alert('Please upload a CSV or Excel file (.csv, .xlsx, .xls)');
+      return;
+    }
+
+    // Validate file size (50MB max)
+    const maxSize = 50 * 1024 * 1024; // 50MB
+    if (file.size > maxSize) {
+      alert('File size must be less than 50MB');
+      return;
+    }
+
+    setUploading(true);
+    try {
+      await onFileUpload(file);
+    } catch (error) {
+      console.error('File upload failed:', error);
+      alert('File upload failed. Please try again.');
+    } finally {
+      setUploading(false);
+      // Clear the file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleAttachClick = () => {
+    if (!chat) {
+      alert('Please create or select a chat first');
+      return;
+    }
+    fileInputRef.current?.click();
+  };
+
   const formatTime = (dateString: string) => {
     return new Date(dateString).toLocaleTimeString([], { 
       hour: '2-digit', 
@@ -58,6 +105,9 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
         
         <div className="chat-info">
           <h2>{chat?.title || 'Select a chat or start a new one'}</h2>
+          <div className="chat-subtitle">
+            {chat ? 'Ask questions about your data or upload a dataset' : 'Create a new chat to get started'}
+          </div>
         </div>
       </div>
 
@@ -123,28 +173,49 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
       <div className="input-container">
         <form onSubmit={handleSubmit} className="message-form">
           <div className="input-wrapper">
-            <button type="button" className="attach-btn">
+            <button 
+              type="button" 
+              className={`attach-btn ${uploading ? 'uploading' : ''}`}
+              onClick={handleAttachClick}
+              disabled={uploading}
+              title="Upload CSV or Excel file"
+            >
               <Paperclip size={16} />
             </button>
+            
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+              accept=".csv,.xlsx,.xls"
+              style={{ display: 'none' }}
+            />
             
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Type a message..."
-              disabled={sending}
+              placeholder={uploading ? "Uploading file..." : "Type a message or upload a dataset..."}
+              disabled={sending || uploading}
               className="message-input"
             />
             
             <button
               type="submit"
-              disabled={!input.trim() || sending}
+              disabled={!input.trim() || sending || uploading}
               className="send-btn"
             >
               <Send size={16} />
             </button>
           </div>
         </form>
+        
+        {uploading && (
+          <div className="upload-status">
+            <div className="upload-spinner"></div>
+            <span>Uploading and processing file...</span>
+          </div>
+        )}
       </div>
     </div>
   );
