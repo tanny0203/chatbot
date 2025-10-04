@@ -1,6 +1,8 @@
 package chat
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"go-backend/internal/file"
@@ -163,6 +165,90 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, fileStorageDB *gorm.DB) {
 
 		})
 
+		chats.POST("/:chat_id/messages", func(c *gin.Context) {
+			var dto struct {
+				Content string `json:"content"`
+				File_id string `json:"file_id"`
+				Filename string `json:"filename"`
+				SqlSchema string `json:"sql_schema"`
+				TableName string `json:"table_name"`
+				ColumnMetadata []models.ColumnMetadata `json:"column_metadata"`
+			}
+
+			chatID := c.Param("chat_id")
+			chatIDUUID, err := uuid.Parse(chatID)
+			if err != nil {
+				c.JSON(400, gin.H{"error": "invalid chat ID"})
+				return
+			}
+			
+			if err := c.ShouldBindJSON(&dto); err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
+			user := c.MustGet("user").(models.User)
+
+			if err := AuthorizeChatAccess(user.ID, chatIDUUID, service); err != nil {
+				if err.Error() == "forbidden" {
+					c.JSON(403, gin.H{"error": "forbidden"})
+					return
+				}
+				c.JSON(500, gin.H{"error": err.Error()})
+				return
+			}
+
+			requestBody, err := json.Marshal(map[string]any{
+				"user_query": dto.Content,
+				"sql_schema": dto.SqlSchema,
+				"table_name": dto.TableName,
+				"column_metadata": dto.ColumnMetadata,
+			})
+			if err != nil {
+				c.JSON(500, gin.H{"error": err.Error()})
+				return
+			}
+			
+			response, err := http.Post("http://localhost:8000/ask", "application/json", bytes.NewBuffer(requestBody))
+
+			if err != nil {
+				c.JSON(500, gin.H{"error": err.Error()})
+				return
+			}
+			defer response.Body.Close()
+			
+			if response.StatusCode != http.StatusOK {
+				c.JSON(500, gin.H{"error": "failed to get response from AI service"})
+				return
+			}
+
+			var aiResponse struct {
+				Answer string `json:"answer"`
+			}
+
+			if err := json.NewDecoder(response.Body).Decode(&aiResponse); err != nil {
+				c.JSON(500, gin.H{"error": err.Error()})
+				return
+			}
+
+			messageService := message.NewService(message.NewRepo(db))
+			
+			_, err = service.AddMessageToChat(chatIDUUID, user.ID, models.MessageRoleAssistant, dto.Content, messageService)
+			if err != nil {
+				c.JSON(500, gin.H{"error": err.Error()})
+				return
+			}
+
+			_, err = service.AddMessageToChat(chatIDUUID, user.ID, models.MessageRoleAssistant, aiResponse.Answer, messageService)
+			if err != nil {
+				c.JSON(500, gin.H{"error": err.Error()})
+				return
+			}
+
+			c.JSON(201, gin.H{
+				"response": aiResponse.Answer,
+			})
+		})
+
 		chats.GET("/:chat_id/files", func(c *gin.Context) {
 			chatID := c.Param("chat_id")
 			chatIDUUID, err := uuid.Parse(chatID)
@@ -205,7 +291,7 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, fileStorageDB *gorm.DB) {
 			c.JSON(http.StatusOK, files)
 		})
 
-		chats.POST("/:chat_id/files", func(c *gin.Context) {
+		chats.GET("/:chat_id/metadata", func(c *gin.Context) {
 			chatID := c.Param("chat_id")
 			chatIDUUID, err := uuid.Parse(chatID)
 			if err != nil {
@@ -224,27 +310,31 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, fileStorageDB *gorm.DB) {
 				return
 			}
 
-			file, err := c.FormFile("file")
+			chat, err := service.GetChatByID(chatIDUUID)
+
 			if err != nil {
-				c.String(400, "Bad request: %s", err.Error())
+				c.JSON(500, gin.H{"error": err.Error()})
 				return
 			}
 
-			fileContent, err := file.Open()
-
-			if err != nil {
-				c.String(500, "Failed to open file: %s", err.Error())
+			if len(chat.Files) == 0 {
+				c.JSON(400, gin.H{"error": "no files associated with this chat"})
 				return
 			}
-			defer fileContent.Close()
 
-			fileResponse, err := service.HandleFileUpload(chatIDUUID, user.ID, file.Filename, fileContent, fileStorageDB)
-
-			if err != nil {
-				c.String(http.StatusInternalServerError, err.Error())
+			metadatas := make([]models.ColumnMetadata, 0, len(chat.Files))
+			for _, f := range chat.Files {
+				metadata, err := file.NewService(file.NewRepo(db)).GetMetadataByFileID(f.ID)
+				if err != nil {
+					c.JSON(500, gin.H{"error": err.Error()})
+					return
+				}
+				metadatas = append(metadatas, *metadata)
 			}
 
-			c.JSON(http.StatusOK, fileResponse)
+
+			c.JSON(200, metadatas)
+
 		})
 
 	}

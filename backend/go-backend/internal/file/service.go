@@ -21,18 +21,12 @@ func (s *Service) CreateFile(file *models.File) error {
 	return nil
 }
 
-func (s *Service) CreateTableForFileUpload(chatID, userID uuid.UUID, fileName, tableName string, headers []string, data [][]string) (*models.File, error) {
-	finalTableName := chatID.String() + "_" + tableName
-	file := &models.File{
-		ID:        uuid.New(),
-		ChatID:    chatID,
-		UserID:    userID,
-		Filename:  fileName,
-		TableName: finalTableName,
-	}
-	if err := s.repo.CreateTableForFileUpload(finalTableName, headers, data, file); err != nil {
-		return nil, err
-	}
 
-	return file, nil
+
+func (s *Service) GetFilesByChat(chatID uuid.UUID) ([]models.File, error) {
+	return s.repo.ListAllByChatID(chatID)
+}
+
+func (s *Service) GetMetadataByFileID(fileID uuid.UUID) (*models.ColumnMetadata, error) {
+	return s.repo.GetMetadata(fileID)
 }

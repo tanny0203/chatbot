@@ -542,7 +542,7 @@ async def test():
     query = await nl2sql.generate_sql(
         table_name=metadata["table_name"],
         metadata=metadata,
-        user_query="List the top 5 most common job titles"
+        user_query=""
     )
 
     print("Generated SQL:\n", query)
@@ -552,7 +552,7 @@ async def test():
     query2 = await llamamodel.generate_sql(
         table_name=metadata["table_name"],
         metadata=metadata,
-        user_query="List the top 5 most common job titles"
+        user_query="give me the first name and last name of all users whose job title is scientist"
     )
     print("Generated SQL:\n", query2)
 
