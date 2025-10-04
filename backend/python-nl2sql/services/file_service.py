@@ -321,7 +321,7 @@ def insert_values(df: pd.DataFrame, table_name: str, conn: sqlalchemy.Engine):
     df_clean.to_sql(
         name=table_name,
         con=conn,
-        if_exists='replace',
+        if_exists='append',
         index=False,
         method='multi',
         chunksize=1000

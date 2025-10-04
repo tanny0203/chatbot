@@ -167,18 +167,47 @@ async def upload_file(
             db.commit()
             db.refresh(file_record)
             
-            # Generate column metadata
-            metadata = get_column_metadata(df, str(file_record.id))
+            # Generate column metadata and persist
+            metadata = get_column_metadata(df, file_record.id)
             save_table_metadata(metadata, db)
-        
-            
+
+            # Serialize metadata to JSON-friendly dicts
+            columns_metadata = [
+                {
+                    "id": str(m.id) if getattr(m, "id", None) is not None else None,
+                    "file_id": str(m.file_id) if getattr(m, "file_id", None) is not None else None,
+                    "column_name": m.column_name,
+                    "data_type": m.data_type,
+                    "sql_type": m.sql_type,
+                    "nullable": m.nullable,
+                    "is_category": m.is_category,
+                    "is_boolean": m.is_boolean,
+                    "is_date": m.is_date,
+                    "unique_count": m.unique_count,
+                    "null_count": m.null_count,
+                    "min_value": m.min_value,
+                    "max_value": m.max_value,
+                    "mean_value": m.mean_value,
+                    "median_value": m.median_value,
+                    "std_value": m.std_value,
+                    "sample_values": m.sample_values,
+                    "top_values": m.top_values,
+                    "enum_values": m.enum_values,
+                    "value_mappings": m.value_mappings,
+                    "synonym_mappings": m.synonym_mappings,
+                    "example_queries": m.example_queries,
+                    "description": m.description,
+                }
+                for m in metadata
+            ]
+
             # Return the required JSON response
             return {
                 "file_id": str(file_record.id),
                 "filename": filename,
                 "table_name": table_name,
                 "sql_schema": sql_schema,
-                "columns_metadata": metadata
+                "columns_metadata": columns_metadata,
             }
             
         finally:
