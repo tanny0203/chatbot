@@ -220,40 +220,42 @@ async def upload_dataset(
         # Read file content
         file_content = await file.read()
         
-        # Create temporary file
+        # Create temporary file and close it before processing (Windows-safe)
+        temp_path = None
         with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file.filename}") as temp_file:
             temp_file.write(file_content)
             temp_file.flush()
+            temp_path = temp_file.name
 
-            try:
-                # Process file using FileService
-                file_service = FileService(db)
-                file_record, stats = await file_service.process_file(
-                    temp_file.name,
-                    file.filename,
-                    chat_id_uuid,
-                    user_id_uuid
-                )
+        try:
+            # Process file using FileService
+            file_service = FileService(db)
+            file_record, stats = await file_service.process_file(
+                temp_path,
+                file.filename,
+                chat_id_uuid,
+                user_id_uuid
+            )
 
-                # Update dataset context in Redis memory using enhanced pipeline
-                chat_service = get_chat_service(db)
-                chat_service.update_dataset_context_from_file_service(
-                    user_id, chat_id, file_record, stats
-                )
+            # Update dataset context in Redis memory using enhanced pipeline
+            chat_service = get_chat_service(db)
+            chat_service.update_dataset_context_from_file_service(
+                user_id, chat_id, file_record, stats
+            )
 
-                return {
-                    "success": True,
-                    "message": "Dataset uploaded and processed successfully",
-                    "file_id": str(file_record.id),
-                    "table_name": file_record.table_name,
-                    "rows": stats.get("rows", 0),
-                    "columns": len(stats.get("columns", [])),
-                    "filename": file.filename
-                }
-
-            finally:
-                # Clean up temporary file
-                os.unlink(temp_file.name)
+            return {
+                "success": True,
+                "message": "Dataset uploaded and processed successfully",
+                "file_id": str(file_record.id),
+                "table_name": file_record.table_name,
+                "rows": stats.get("rows", 0),
+                "columns": len(stats.get("columns", [])),
+                "filename": file.filename
+            }
+        finally:
+            # Clean up temporary file
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
 
     except Exception as e:
         logger.error(f"Error uploading dataset: {e}")
@@ -380,8 +382,8 @@ async def upload_file(
     # Read file content
     file_content = await file.read()
     filename = file.filename
-    
-    # Start background processing
+
+    # Start background processing (the background task will handle temp file safely)
     asyncio.create_task(process_file_background(task_id, chat_id_uuid, user_id_uuid, file_content, filename, db))
     
     return {"task_id": task_id}
@@ -397,48 +399,49 @@ async def process_file_background(task_id: str, chat_id_uuid: uuid.UUID, user_id
             "filename": filename
         }
 
-        # Create temporary file
+        # Create temporary file, close it, then process (Windows-safe)
+        temp_path = None
         with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{filename}") as temp_file:
             temp_file.write(file_content)
             temp_file.flush()
+            temp_path = temp_file.name
 
-            try:
-                # Stage 2: Generating metadata
-                progress_store[task_id] = {
-                    "status": "metadata",
-                    "message": "Generating metadata",
-                    "progress": 90,
-                    "filename": filename
-                }
+        try:
+            # Stage 2: Generating metadata
+            progress_store[task_id] = {
+                "status": "metadata",
+                "message": "Generating metadata",
+                "progress": 90,
+                "filename": filename
+            }
 
-                # Process file
-                file_service = FileService(db)
-                file_record, stats = await file_service.process_file(
-                    temp_file.name,
-                    filename,
-                    chat_id_uuid,
-                    user_id_uuid
-                )
+            # Process file
+            file_service = FileService(db)
+            file_record, stats = await file_service.process_file(
+                temp_path,
+                filename,
+                chat_id_uuid,
+                user_id_uuid
+            )
 
-                # Update dataset context in Redis memory
-                chat_service = get_chat_service(db)
-                chat_service.update_dataset_context_from_file_service(
-                    str(user_id_uuid), str(chat_id_uuid), file_record, stats
-                )
+            # Update dataset context in Redis memory
+            chat_service = get_chat_service(db)
+            chat_service.update_dataset_context_from_file_service(
+                str(user_id_uuid), str(chat_id_uuid), file_record, stats
+            )
 
-                # Completed
-                progress_store[task_id] = {
-                    "status": "completed",
-                    "message": "Upload completed",
-                    "progress": 100,
-                    "filename": filename,
-                    "file_id": str(file_record.id),
-                    "table_name": file_record.table_name
-                }
-
-            finally:
-                # Clean up temporary file
-                os.unlink(temp_file.name)
+            # Completed
+            progress_store[task_id] = {
+                "status": "completed",
+                "message": "Upload completed",
+                "progress": 100,
+                "filename": filename,
+                "file_id": str(file_record.id),
+                "table_name": file_record.table_name
+            }
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
                 
     except Exception as e:
         # Update progress: Error
