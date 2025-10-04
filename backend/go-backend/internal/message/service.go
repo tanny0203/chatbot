@@ -2,9 +2,6 @@ package message
 
 import (
 	"go-backend/internal/models"
-
-
-	"github.com/google/uuid"
 )
 
 type Service struct {
@@ -15,29 +12,13 @@ func NewService(r *Repository) *Service {
 	return &Service{repo: r}
 }
 
-func (s *Service) SendMessage(chatID, userID uuid.UUID, content string) (*models.Message, error) {
-	message := &models.Message{
-		ChatID:  chatID,
-		UserID:  userID,
-		Role:    models.MessageRoleUser,
-		Content: content,
-	}
-	err := s.repo.CreateMessage(message)
-	if err != nil {
-		return &models.Message{}, err
-	}
-	aiContent := CallExternalAIAPI(message.Content)
-	aiMessage := &models.Message{
-		ID: uuid.New(),
-		ChatID:  message.ChatID,
-		UserID:  message.UserID,
-		Role:    models.MessageRoleAssistant,
-		Content: aiContent,
-	}
-	_ = s.repo.CreateMessage(aiMessage)
-	return aiMessage, nil
-}
+// Deprecated: Message creation with assistant responses has been removed.
+// The Python FastAPI NL2SQL service is responsible for processing and responding
+// to messages. The Go backend retains only storage utilities if needed later.
+// Consider implementing explicit "store message" endpoints if persistence in Go
+// is required without AI generation.
 
-func CallExternalAIAPI(message string) string {
-	return "This is a placeholder response from the AI."
+// CreateUserMessage stores a user-authored message without generating an assistant reply.
+func (s *Service) CreateUserMessage(msg *models.Message) error {
+	return s.repo.CreateMessage(msg)
 }

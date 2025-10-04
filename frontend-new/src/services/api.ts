@@ -7,7 +7,6 @@ import type {
   Chat,
   CreateChatDTO,
   Message,
-  SendMessageDTO,
   FileResponse,
   NL2SQLRequest,
   NL2SQLResponse,
@@ -93,11 +92,7 @@ export const chatApi = {
     return response.data;
   },
 
-  // This will be handled by NL2SQL API instead
-  sendMessage: async (chatId: string, messageData: SendMessageDTO): Promise<Message> => {
-    const response: AxiosResponse<Message> = await goApi.post(`/chats/${chatId}/messages`, messageData);
-    return response.data;
-  },
+  // Sending messages is handled by Python NL2SQL backend now.
 
   getFiles: async (chatId: string): Promise<FileResponse[]> => {
     const response: AxiosResponse<FileResponse[]> = await goApi.get(`/chats/${chatId}/files`);

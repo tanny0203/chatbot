@@ -16,8 +16,8 @@ export class DualBackendService {
   }
 
   /**
-   * Send a message that might be an NL2SQL query
-   * First tries Python backend for NL2SQL, falls back to Go backend for regular chat
+   * Send a message to the Python NL2SQL backend.
+   * The Go backend no longer handles message sending.
    */
   async sendMessage(chatId: string, content: string): Promise<Message> {
     if (!this.user) {
@@ -25,7 +25,7 @@ export class DualBackendService {
     }
 
     try {
-      // First, try to send to Python NL2SQL backend
+      // Send to Python NL2SQL backend
       const nl2sqlResponse = await nl2sqlApi.askQuestion({
         question: content,
         user_id: this.user.id,
@@ -41,15 +41,6 @@ export class DualBackendService {
           created_at: new Date().toISOString(),
         };
 
-        // Also store the message in the Go backend for chat history
-        try {
-          await chatApi.sendMessage(chatId, { content });
-          await chatApi.sendMessage(chatId, { content: assistantMessage.content });
-        } catch (error) {
-          console.warn('Failed to store message in Go backend:', error);
-          // Continue anyway, as the NL2SQL response is the primary concern
-        }
-
         return assistantMessage;
       } else if (nl2sqlResponse.requires_dataset) {
         // If no dataset is uploaded, return a helpful message
@@ -60,29 +51,13 @@ export class DualBackendService {
           created_at: new Date().toISOString(),
         };
 
-        // Store in Go backend
-        try {
-          await chatApi.sendMessage(chatId, { content });
-          await chatApi.sendMessage(chatId, { content: helpMessage.content });
-        } catch (error) {
-          console.warn('Failed to store help message in Go backend:', error);
-        }
-
         return helpMessage;
       } else {
-        // If NL2SQL failed for other reasons, fall back to Go backend
-        return await chatApi.sendMessage(chatId, { content });
+        throw new Error('NL2SQL request failed');
       }
     } catch (error) {
-      console.warn('NL2SQL backend failed, falling back to Go backend:', error);
-      
-      // Fall back to Go backend for regular chat
-      try {
-        return await chatApi.sendMessage(chatId, { content });
-      } catch (goError) {
-        console.error('Both backends failed:', { nl2sqlError: error, goError });
-        throw new Error('Failed to send message to both backends');
-      }
+      console.error('NL2SQL backend failed:', error);
+      throw error;
     }
   }
 
@@ -103,20 +78,8 @@ export class DualBackendService {
       
       if (uploadResponse.success) {
         // Create a system message about the successful upload
-        const systemMessage = `📊 Dataset "${uploadResponse.filename}" uploaded successfully! 
-        
-Table: ${uploadResponse.table_name}
-Rows: ${uploadResponse.rows.toLocaleString()}
-Columns: ${uploadResponse.columns}
-
-You can now ask questions about your data.`;
-
-        // Store the system message in Go backend for chat history
-        try {
-          await chatApi.sendMessage(chatId, { content: systemMessage });
-        } catch (error) {
-          console.warn('Failed to store upload message in Go backend:', error);
-        }
+  // Note: We no longer persist assistant/system messages via Go backend.
+  // Surface success via UI by returning success=true.
 
         return {
           success: true,
@@ -129,15 +92,7 @@ You can now ask questions about your data.`;
     } catch (error) {
       console.error('File upload failed:', error);
       
-      // Create error message
-      const errorMessage = `❌ File upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
-      
-      // Store error message in Go backend
-      try {
-        await chatApi.sendMessage(chatId, { content: errorMessage });
-      } catch (chatError) {
-        console.warn('Failed to store error message in Go backend:', chatError);
-      }
+  // No Go backend storage for errors; surface via return value only
 
       return {
         success: false,
@@ -151,26 +106,21 @@ You can now ask questions about your data.`;
    */
   async getChatHistory(chatId: string): Promise<Message[]> {
     try {
-      // Get messages from Go backend (primary chat history)
-      const goMessages = await chatApi.getMessages(chatId);
-      
-      // Optionally, get NL2SQL history for additional context
-      if (this.user) {
-        try {
-          const pythonHistory = await nl2sqlApi.getChatHistory(chatId, this.user.id, 10);
-          if (pythonHistory.success && pythonHistory.history) {
-            // Merge or supplement with Python history if needed
-            // For now, we'll primarily use Go backend messages
-            console.log('Python history available:', pythonHistory.history.length, 'messages');
-          }
-        } catch (error) {
-          console.warn('Failed to get Python history:', error);
-        }
+      if (!this.user) return [];
+      const pythonHistory = await nl2sqlApi.getChatHistory(chatId, this.user.id, 50);
+      if (pythonHistory && pythonHistory.success && Array.isArray(pythonHistory.history)) {
+        // Map python history to Message interface if formats differ
+        const messages: Message[] = pythonHistory.history.map((h: any, idx: number) => ({
+          id: h.id || `py-${idx}-${Date.now()}`,
+          role: h.role || h.type || (h.is_user ? 'user' : 'assistant'),
+          content: h.content || h.text || '',
+          created_at: h.created_at || new Date().toISOString(),
+        }));
+        return messages;
       }
-
-      return goMessages;
+      return [];
     } catch (error) {
-      console.error('Failed to get chat history:', error);
+      console.error('Failed to get Python chat history:', error);
       return [];
     }
   }

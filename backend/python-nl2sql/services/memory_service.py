@@ -1,3 +1,4 @@
+import os
 import redis
 import json
 from typing import Dict, List, Any, Optional
@@ -10,10 +11,18 @@ logger = logging.getLogger(__name__)
 class RedisMemoryService:
     """Redis-based memory service for LangChain conversations and dataset context"""
     
-    def __init__(self, redis_url: str = "redis://localhost:6379/0"):
+    def __init__(self, redis_url: str = None):
         """Initialize Redis connection"""
         try:
-            self.redis_client = redis.from_url(redis_url, decode_responses=True)
+            # Prefer explicit parameter, then environment variable, then default
+            url = (
+                redis_url
+                or os.getenv(
+                    "REDIS_URL",
+                    "redis://default:CwDVECbWNHdharfrhrUlSIYCDMUOLfqz@turntable.proxy.rlwy.net:26999",
+                )
+            )
+            self.redis_client = redis.from_url(url, decode_responses=True)
             # Test connection
             self.redis_client.ping()
             logger.info("Connected to Redis successfully")
@@ -181,5 +190,6 @@ def get_memory_service() -> RedisMemoryService:
     """Get singleton instance of memory service"""
     global memory_service
     if memory_service is None:
+        # Allow override via REDIS_URL; default set above
         memory_service = RedisMemoryService()
     return memory_service

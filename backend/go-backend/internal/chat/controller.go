@@ -56,14 +56,14 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, fileStorageDB *gorm.DB) {
 				ID        uuid.UUID `json:"id"`
 				Title     string    `json:"title"`
 				CreatedAt time.Time `json:"created_at"`
-				}
+			}
 
 			chatResponse := make([]DTO, 0, len(chats))
 
-			for _, chat := range chats {	
+			for _, chat := range chats {
 				chatResponse = append(chatResponse, DTO{
-					ID: chat.ID,
-					Title: chat.Title,
+					ID:        chat.ID,
+					Title:     chat.Title,
 					CreatedAt: chat.CreatedAt,
 				})
 			}
@@ -78,9 +78,9 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, fileStorageDB *gorm.DB) {
 				c.JSON(400, gin.H{"error": "invalid chat ID"})
 				return
 			}
-			
+
 			user := c.MustGet("user").(models.User)
-			
+
 			if err := AuthorizeChatAccess(user.ID, chatIDUUID, service); err != nil {
 				if err.Error() == "forbidden" {
 					c.JSON(403, gin.H{"error": "forbidden"})
@@ -89,13 +89,13 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, fileStorageDB *gorm.DB) {
 				c.JSON(500, gin.H{"error": err.Error()})
 				return
 			}
-		
+
 			chat, err := service.GetChatByID(chatIDUUID)
 			if err != nil {
 				c.JSON(500, gin.H{"error": err.Error()})
 				return
 			}
-		
+
 			messages := make([]message.MessageResponseDTO, 0, len(chat.Messages))
 			for _, m := range chat.Messages {
 				messages = append(messages, message.MessageResponseDTO{
@@ -121,7 +121,7 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, fileStorageDB *gorm.DB) {
 				CreatedAt: chat.CreatedAt,
 				UpdatedAt: chat.UpdatedAt,
 				Messages:  messages,
-				Files: files,
+				Files:     files,
 			}
 			c.JSON(200, resp)
 		})
@@ -149,7 +149,7 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, fileStorageDB *gorm.DB) {
 				c.JSON(500, gin.H{"error": err.Error()})
 				return
 			}
-			
+
 			messages := make([]message.MessageResponseDTO, 0, len(chat.Messages))
 			for _, m := range chat.Messages {
 				messages = append(messages, message.MessageResponseDTO{
@@ -163,44 +163,6 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, fileStorageDB *gorm.DB) {
 
 		})
 
-		chats.POST("/:chat_id/messages", func(c *gin.Context) {
-			var dto struct {
-				Content string `json:"content"`
-			}
-			if err := c.ShouldBindJSON(&dto); err != nil {
-				c.JSON(400, gin.H{"error": err.Error()})
-				return
-			}
-			user := c.MustGet("user").(models.User)
-			chatID := c.Param("chat_id")
-			chatIDUUID, err := uuid.Parse(chatID)
-			if err != nil {
-				c.JSON(400, gin.H{"error": "invalid chat ID"})
-				return
-			}
-			if err := AuthorizeChatAccess(user.ID, chatIDUUID, service); err != nil {
-				if err.Error() == "forbidden" {
-					c.JSON(403, gin.H{"error": "forbidden"})
-					return
-				}
-				c.JSON(500, gin.H{"error": err.Error()})
-				return
-			}
-
-			response, err := service.SendMessage(chatIDUUID, user.ID, dto.Content)
-			if err != nil {
-				c.JSON(500, gin.H{"error": err.Error()})
-				return
-			}
-			c.JSON(201, gin.H{
-				"id":         response.ID,
-				"role":       response.Role,
-				"content":    response.Content,
-				"created_at": response.CreatedAt,
-			})
-		})
-
-
 		chats.GET("/:chat_id/files", func(c *gin.Context) {
 			chatID := c.Param("chat_id")
 			chatIDUUID, err := uuid.Parse(chatID)
@@ -211,16 +173,14 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, fileStorageDB *gorm.DB) {
 
 			user := c.MustGet("user").(models.User)
 
-		if err := AuthorizeChatAccess(user.ID, chatIDUUID, service); err != nil {
-			if err.Error() == "forbidden" {
-				c.JSON(403, gin.H{"error": "forbidden"})
+			if err := AuthorizeChatAccess(user.ID, chatIDUUID, service); err != nil {
+				if err.Error() == "forbidden" {
+					c.JSON(403, gin.H{"error": "forbidden"})
+					return
+				}
+				c.JSON(500, gin.H{"error": err.Error()})
 				return
 			}
-			c.JSON(500, gin.H{"error": err.Error()})
-			return
-		}
-
-			
 
 			chat, err := service.GetChatByID(chatIDUUID)
 			if err != nil {
@@ -255,15 +215,14 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, fileStorageDB *gorm.DB) {
 
 			user := c.MustGet("user").(models.User)
 
-		if err := AuthorizeChatAccess(user.ID, chatIDUUID, service); err != nil {
-			if err.Error() == "forbidden" {
-				c.JSON(403, gin.H{"error": "forbidden"})
+			if err := AuthorizeChatAccess(user.ID, chatIDUUID, service); err != nil {
+				if err.Error() == "forbidden" {
+					c.JSON(403, gin.H{"error": "forbidden"})
+					return
+				}
+				c.JSON(500, gin.H{"error": err.Error()})
 				return
 			}
-			c.JSON(500, gin.H{"error": err.Error()})
-			return
-		}
-
 
 			file, err := c.FormFile("file")
 			if err != nil {
@@ -288,21 +247,19 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, fileStorageDB *gorm.DB) {
 			c.JSON(http.StatusOK, fileResponse)
 		})
 
-
 	}
 }
 
-
 func AuthorizeChatAccess(userID, chatID uuid.UUID, service *Service) error {
-    chat, err := service.GetChatByID(chatID)
-    if err != nil {
-        if errors.Is(err, gorm.ErrRecordNotFound) {
-            return fmt.Errorf("forbidden") 
-        }
-        return err
-    }
-    if chat.UserID != userID {
-        return fmt.Errorf("forbidden")
-    }
-    return nil
+	chat, err := service.GetChatByID(chatID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("forbidden")
+		}
+		return err
+	}
+	if chat.UserID != userID {
+		return fmt.Errorf("forbidden")
+	}
+	return nil
 }
