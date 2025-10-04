@@ -79,9 +79,11 @@ class FileService:
         
         # File storage database for actual CSV/Excel data tables    
         self.file_storage = FileStorageDB(file_storage_url)
-        # Initialize cache
-        cache_dir = Path("/tmp/file_service_cache")
-        cache_dir.mkdir(exist_ok=True)
+
+        # Initialize cache in project folder (Windows-safe)
+        base_dir = Path(__file__).resolve().parent
+        cache_dir = base_dir / "tmp_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
         self.cache = joblib.Memory(location=str(cache_dir))
         
         # Configure thread pool

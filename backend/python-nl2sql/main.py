@@ -9,6 +9,7 @@ import os
 import json
 import asyncio
 from typing import AsyncGenerator, Optional
+from pathlib import Path
 from models.database import get_main_db
 from services.file_service import FileService
 from services.chat_service import get_chat_service
@@ -219,19 +220,23 @@ async def upload_dataset(
     try:
         # Read file content
         file_content = await file.read()
-        
-        # Create temporary file and close it before processing (Windows-safe)
-        temp_path = None
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file.filename}") as temp_file:
-            temp_file.write(file_content)
-            temp_file.flush()
-            temp_path = temp_file.name
+
+        # Create a project-local tmp directory for uploads
+        base_dir = Path(__file__).resolve().parent
+        tmp_dir = base_dir / "tmp_uploads"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write to a deterministic file path under the project folder
+        safe_name = f"{uuid.uuid4()}_{file.filename}"
+        temp_path = tmp_dir / safe_name
+        with open(temp_path, "wb") as f:
+            f.write(file_content)
 
         try:
             # Process file using FileService
             file_service = FileService(db)
             file_record, stats = await file_service.process_file(
-                temp_path,
+                str(temp_path),
                 file.filename,
                 chat_id_uuid,
                 user_id_uuid
@@ -253,9 +258,12 @@ async def upload_dataset(
                 "filename": file.filename
             }
         finally:
-            # Clean up temporary file
-            if temp_path and os.path.exists(temp_path):
-                os.unlink(temp_path)
+            # Clean up uploaded temp file
+            try:
+                if temp_path.exists():
+                    temp_path.unlink()
+            except Exception:
+                pass
 
     except Exception as e:
         logger.error(f"Error uploading dataset: {e}")
@@ -383,7 +391,7 @@ async def upload_file(
     file_content = await file.read()
     filename = file.filename
 
-    # Start background processing (the background task will handle temp file safely)
+    # Start background processing (the background task manages its own temp file)
     asyncio.create_task(process_file_background(task_id, chat_id_uuid, user_id_uuid, file_content, filename, db))
     
     return {"task_id": task_id}
@@ -399,12 +407,13 @@ async def process_file_background(task_id: str, chat_id_uuid: uuid.UUID, user_id
             "filename": filename
         }
 
-        # Create temporary file, close it, then process (Windows-safe)
-        temp_path = None
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{filename}") as temp_file:
-            temp_file.write(file_content)
-            temp_file.flush()
-            temp_path = temp_file.name
+        # Create a project-local tmp directory and write the file there
+        base_dir = Path(__file__).resolve().parent
+        tmp_dir = base_dir / "tmp_uploads"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        temp_path = tmp_dir / f"{uuid.uuid4()}_{filename}"
+        with open(temp_path, "wb") as f:
+            f.write(file_content)
 
         try:
             # Stage 2: Generating metadata
@@ -418,7 +427,7 @@ async def process_file_background(task_id: str, chat_id_uuid: uuid.UUID, user_id
             # Process file
             file_service = FileService(db)
             file_record, stats = await file_service.process_file(
-                temp_path,
+                str(temp_path),
                 filename,
                 chat_id_uuid,
                 user_id_uuid
@@ -440,8 +449,11 @@ async def process_file_background(task_id: str, chat_id_uuid: uuid.UUID, user_id
                 "table_name": file_record.table_name
             }
         finally:
-            if temp_path and os.path.exists(temp_path):
-                os.unlink(temp_path)
+            try:
+                if temp_path.exists():
+                    temp_path.unlink()
+            except Exception:
+                pass
                 
     except Exception as e:
         # Update progress: Error
