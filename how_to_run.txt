@@ -1,0 +1,17 @@
+*** open another terminal 
+
+cd backend\go-backend\
+go run main.go
+
+
+*** open another terminal 
+
+cd backend\python-nl2sql
+uv run main.py
+
+
+
+*** open another terminal 
+
+cd frontend-new
+npm run dev

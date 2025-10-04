@@ -1,0 +1,185 @@
+Top priorities (must-do)
+Align API contracts between Go, Python, and Frontend
+
+Python is missing endpoints the frontend calls:
+Frontend expects:
+POST /api/upload
+POST /api/ask
+GET /chats/{chatId}/history
+POST /chats/
+GET /health
+Python currently provides:
+POST /chats/{chat_id}/files (upload)
+GET /chats/{chat_id}/files/upload/progress/{task_id} (SSE)
+Action:
+Add POST /api/upload that proxies to existing upload logic (or change frontend to use /chats/{chat_id}/files).
+Add POST /api/ask that accepts { question, user_id, chat_id }, calls your NL2SQL chain, executes SQL on file storage DB, returns { success, answer, sql_query?, result_count?, execution_success? } (see api.ts NL2SQLResponse).
+Add GET /health simple JSON.
+Add minimal chat endpoints in Python or adjust frontend to not rely on them:
+Either implement POST /chats/ (no-op or create metadata context) and GET /chats/{id}/history (compose from stored messages) in Python; or change the frontend service to fetch history from Go (currently Python).
+Go chat message sender path and payload mismatch:
+controller.go posts to http://localhost:8000/ask with a body { user_query, sql_schema, table_name, column_metadata } that Python doesn’t accept.
+Fix to call Python /api/ask with { question, user_id, chat_id } or remove this call if frontend alone talks to Python.
+Fix message role bug and storage in Go
+
+In chats.POST("/:chat_id/messages"):
+It stores the user message with role = assistant. It should be:
+Save user message as role=user (content = dto.Content)
+Save AI response as role=assistant
+Decide a single message flow: Either the frontend mediates with Python and only stores messages in Go, or Go calls Python and stores both. Don’t do both to avoid duplicates.
+File upload integration
+
+Frontend currently uploads to Python at /api/upload with FormData { file, user_id, chat_id }.
+Python endpoint is /chats/{chat_id}/files expecting multipart with file and user_id (Form).
+Options:
+A) Add /api/upload route in Python mirroring current payload to reduce frontend change.
+B) Update frontend to call /chats/{chat_id}/files and ensure user_id is provided as Form field, not JSON.
+Metadata data model mismatch
+
+Go has models.ColumnMetadata as a JSON view model; not a DB model.
+Python persists column metadata into table column_metadata (SQLAlchemy model).
+Go file.Repository.GetMetadata tries to query GORM against models.ColumnMetadata which has no gorm tags/ID/FileID fields and represents aggregate attribute names different from Python DB columns. This will fail.
+Action (choose one):
+A) Implement a GORM model for column_metadata that matches Python’s schema (id, file_id, column_name, ... JSONB fields) and update Go queries to return a slice per file, then adapt chat GET /:chat_id/metadata to aggregate per file.
+B) Stop querying metadata from Go; have the frontend query Python for metadata if needed. If you keep Go endpoint /chats/:chat_id/metadata, back it by Python via HTTP.
+Database migrations
+
+Ensure column_metadata table exists:
+Option 1: Add Go GORM model + include in migrate.go.
+Option 2: Call Base.metadata.create_all in Python on startup (for its tables: column_metadata, and optionally files), making sure the schema matches Go’s files table to avoid conflicts.
+Ensure Postgres has pgcrypto extension (for gen_random_uuid in both Go and Python models). Create extension in setup/migration.
+Environment config
+
+Go expects DB_URL, FILESTORAGEDB_URL, SECRET_KEY, COOKIE_DOMAIN in .env.
+Python expects MAIN_DATABASE_URL, FILE_STORAGE_DATABASE_URL.
+Action: Provide root .env.example for both services and ensure values match (point to same main DB for users/chats/files; separate DB for file storage). Add notes about cookie domain in local dev.
+Backend (Go) tasks
+CORS and cookies
+
+In main.go, CORS allows http://localhost:5173 and credentials; good. Confirm frontend runs at 5173.
+Ensure cookie Authorization domain is valid for local dev (COOKIE_DOMAIN=localhost or empty) and secure=false. Document prod change (secure=true).
+Users/auth
+
+Existing endpoints: POST /auth/register, POST /auth/login, GET /auth/me, POST /auth/logout.
+JWT generation in jwt_util.go looks fine. Confirm SECRET_KEY present.
+Middleware RequireAuth() parses cookie and loads user; good.
+Chat handlers
+
+POST /chats creates chat.
+GET /chats lists chats for the user.
+GET /chats/:chat_id returns chat with preloaded Messages and Files.
+GET /chats/:chat_id/messages works.
+POST /chats/:chat_id/messages:
+Fix role bug (as noted).
+Fix Python call or move all Python calls to frontend.
+Consider adding streaming support later (nice-to-have).
+GET /chats/:chat_id/files returns files; OK.
+File handler in Go
+
+controller.go is empty. Decide:
+Either remove/leave it, since Python handles uploads, or implement a Go proxy that forwards to Python (not necessary for hackathon).
+file.Service and file.Repository exist for DB operations on files/metadata; ensure they’re used consistently or trimmed.
+Models/migration
+
+Add/align ColumnMetadata GORM model if Go is responsible for metadata reads.
+Run AutoMigrate on startup (currently separate binary migrate.go). Decide whether to call AutoMigrate from main.go for hackathon simplicity.
+Backend (Python) tasks
+Implement the NL2SQL ask endpoint
+
+POST /api/ask with Pydantic:
+request: { question: str, user_id: UUID, chat_id: UUID }
+response: NL2SQLResponse shape used in frontend: { success: bool, answer: str, sql_query?: str, result_count?: int, execution_success?: bool, requires_dataset?: bool, error?: string }
+Use metadata from column_metadata (by file_id(s) for the chat) to construct prompt, then generate SQL with NL2SQL chain, run against file_storage DB (file_storage_engine), and format results as text/table summary.
+Add /api/upload (alias)
+
+Provide POST /api/upload form handler that accepts multipart { file, user_id, chat_id }, and internally calls the existing /chats/{chat_id}/files logic (shared function), returning the same payload expected by frontend:
+{ file_id, filename, table_name, sql_schema, columns_metadata }
+Add /health
+
+GET /health returns { status: "ok" }.
+Optional: Chat support endpoints or ignore
+
+If frontend still calls nl2sqlApi.createPythonChat and nl2sqlApi.getChatHistory, add:
+POST /chats/ to acknowledge with { success: true }.
+GET /chats/{chatId}/history: pull messages from main DB if stored by Go, or return empty. For hackathon, consider returning an empty list and rely on Go history.
+Ensure DB tables exist
+
+On startup, call Base.metadata.create_all(main_engine) for at least column_metadata (and files if you want Python to own it).
+Confirm pgcrypto extension installed in the DB (gen_random_uuid).
+CORS
+
+FastAPI has CORS allow_origins=[""], with credentials enabled. If you add cookies, you can’t use ""; but currently Python uses no cookies. This is OK.
+Frontend tasks
+Service wiring cleanup
+
+If Python adds /api/upload and /api/ask, api.ts is fine.
+If not, update nl2sqlApi.uploadFile to POST /chats/{chat_id}/files and send user_id as FormData. The current code already sends FormData, but targets /api/upload.
+DualBackendService.sendMessage() currently talks only to Python and does not persist messages to Go. Decide one approach:
+A) Let Go store messages: After a successful /api/ask, call Go /chats/:id/messages twice (user and assistant). Or,
+B) Keep message storage in Python only and adjust Go usage.
+getChatHistory() currently reads from Python’s history endpoint. If not implementing that, point it to Go /chats/:id/messages.
+UI polish
+
+Show upload progress via SSE endpoint /chats/{chat_id}/files/upload/progress/{task_id} (optional).
+Handle “no dataset uploaded” state—already handled with requires_dataset in service.
+DevOps and DX
+Docker Compose (strongly recommended)
+
+Services:
+postgres-main
+postgres-filestorage
+go-backend (port 8080)
+python-nl2sql (port 8000)
+frontend (5173 dev or a build served by nginx)
+Networks and environment variables wired.
+Init SQL to CREATE EXTENSION pgcrypto for both DBs.
+.env and config
+
+Create .env.example at repo root with:
+DB_URL=postgres://user:pass@postgres-main:5432/maindb?sslmode=disable
+FILESTORAGEDB_URL=postgres://user:pass@postgres-filestorage:5432/filestorage?sslmode=disable
+SECRET_KEY=changeme
+COOKIE_DOMAIN=localhost
+MAIN_DATABASE_URL=postgres://user:pass@postgres-main:5432/maindb?sslmode=disable
+FILE_STORAGE_DATABASE_URL=postgres://user:pass@postgres-filestorage:5432/filestorage?sslmode=disable
+Logging
+
+Add basic structured logs in both services (request logs, errors) to ease demo debugging.
+Seeding and demo script
+
+Provide a small sample CSV and a one-click script to:
+register/login
+create chat
+upload sample CSV
+ask 1-2 questions
+Testing and QA
+Smoke tests
+
+Go: register/login, GET /auth/me, create chat, list chats.
+Python: /health, /api/upload (with sample CSV), /api/ask (with trivial query), ensure non-200s return stabilized NL2SQLResponse.
+Integration tests (happy path + 1-2 edge cases)
+
+No dataset uploaded -> ask -> requires_dataset=true flow.
+Large CSV upload within limits.
+Invalid chat_id/user_id.
+Quality gates
+
+Lint Go and TypeScript; run minimal unit tests (if any).
+Run a local end-to-end demo path to verify.
+Nice-to-haves (time permitting)
+Streaming answers from Python (SSE) for long NL2SQL generations.
+Chat rename/delete endpoints in Go and corresponding UI.
+Rate limiting on Python ask endpoint.
+File size limit and type validation (already partially done).
+Better error messages surfaced to UI.
+Specific fixes to make right now (high impact with low effort)
+Fix role bug in Go message creation
+In controller.go, within POST /:chat_id/messages:
+Save user message with role=models.MessageRoleUser
+Save assistant message with role=models.MessageRoleAssistant
+Unify Python ask endpoint
+Implement POST /api/ask in main.py with the request/response format used by the frontend.
+Align file upload route
+Add /api/upload alias in Python to keep frontend unchanged or adjust frontend to use /chats/{chat_id}/files.
+Decide where message persistence lives and do it consistently
+Easiest: store in Go. After nl2sqlApi.askQuestion() returns success, call Go to store both messages.
