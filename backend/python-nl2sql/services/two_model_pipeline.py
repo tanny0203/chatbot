@@ -1,4 +1,8 @@
-from langchain_community.llms import Ollama
+# Prefer the new langchain_ollama package; fall back to community import for compatibility
+try:
+    from langchain_ollama import OllamaLLM as OllamaModel
+except Exception:  # pragma: no cover - fallback for older envs
+    from langchain_community.llms import Ollama as OllamaModel
 from langchain.prompts import PromptTemplate
 from sqlalchemy.orm import Session
 from sqlalchemy import text, inspect
@@ -19,8 +23,8 @@ class TwoModelPipeline:
     def __init__(self, sql_model: str = "sqlcoder", nlp_model: str = "llama3.2"):
         """Initialize both models"""
         try:
-            self.sqlcoder = Ollama(model=sql_model)
-            self.llama = Ollama(model=nlp_model)
+            self.sqlcoder = OllamaModel(model=sql_model)
+            self.llama = OllamaModel(model=nlp_model)
             self.memory_service = get_memory_service()
             logger.info(f"Initialized models: SQLCoder ({sql_model}), Llama ({nlp_model})")
         except Exception as e:

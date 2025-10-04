@@ -123,8 +123,41 @@ export const nl2sqlApi = {
 
   // Ask NL2SQL question
   askQuestion: async (request: NL2SQLRequest): Promise<NL2SQLResponse> => {
-    const response: AxiosResponse<NL2SQLResponse> = await pythonApi.post('/api/ask', request);
-    return response.data;
+    try {
+      const response: AxiosResponse<NL2SQLResponse> = await pythonApi.post('/api/ask', request);
+      return response.data;
+    } catch (err: any) {
+      // Normalize FastAPI HTTPException detail payloads to our NL2SQLResponse shape
+      const detail = err?.response?.data?.detail;
+      if (detail && typeof detail === 'object') {
+        // No dataset case
+        if (detail.requires_dataset) {
+          return {
+            success: false,
+            answer: detail.message || 'Please upload a dataset first.',
+            requires_dataset: true,
+            error: detail.error || 'no_dataset',
+          } as NL2SQLResponse;
+        }
+
+        // Other processing failures
+        return {
+          success: false,
+          answer: detail.message || 'Processing failed.',
+          sql_query: detail.sql_query,
+          result_count: 0,
+          execution_success: false,
+          error: detail.error || 'processing_failed',
+        } as NL2SQLResponse;
+      }
+
+      // Fallback for network or unexpected errors
+      return {
+        success: false,
+        answer: 'Request to NL2SQL backend failed.',
+        error: err?.message || 'unknown_error',
+      } as NL2SQLResponse;
+    }
   },
 
   // Get chat history from Python backend
